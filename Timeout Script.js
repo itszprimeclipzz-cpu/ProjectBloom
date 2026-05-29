@@ -14,8 +14,8 @@
 const { Client, GatewayIntentBits, Partials } = require("discord.js");
 
 // ── CONFIG ────────────────────────────────────────────────────────────────────
-const BOT_TOKEN        = "YOUR_BOT_TOKEN_HERE";   // Bot token from Discord Dev Portal
-const PROTECTED_USER_ID = "TARGET_USER_ID_HERE";  // User ID to protect (right-click → Copy ID)
+const BOT_TOKEN        = "MTUxMDAzMDY4OTk1NTc0NTk4NQ.G37jp8.fNcvwPwpEgt6XMaYciYNWDqVlLdkrazhMNJryk";   // Bot token from Discord Dev Portal
+const PROTECTED_USER_ID = "1388187970493743125";  // User ID to protect (right-click → Copy ID)
 const TIMEOUT_DURATION_MS = 60_000;               // 1 minute in milliseconds
 // ─────────────────────────────────────────────────────────────────────────────
 

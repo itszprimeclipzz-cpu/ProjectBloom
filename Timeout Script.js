@@ -1,23 +1,5 @@
-// pingGuard.js — Discord bot that timeouts anyone who pings a protected user
-// ─────────────────────────────────────────────────────────────────────────────
-// Setup:
-//   1. npm install discord.js
-//   2. Fill in the three config values below
-//   3. node pingGuard.js
-//
-// Required bot permissions (in Discord Developer Portal & server):
-//   • Read Messages / View Channels
-//   • Send Messages
-//   • Moderate Members  ← needed to issue timeouts
-// ─────────────────────────────────────────────────────────────────────────────
-
-const { Client, GatewayIntentBits, Partials } = require("discord.js");
-
-// ── CONFIG ────────────────────────────────────────────────────────────────────
-const BOT_TOKEN        = "MTUxMDAzMDY4OTk1NTc0NTk4NQ.G37jp8.fNcvwPwpEgt6XMaYciYNWDqVlLdkrazhMNJryk";   // Bot token from Discord Dev Portal
-const PROTECTED_USER_ID = "1388187970493743125";  // User ID to protect (right-click → Copy ID)
-const TIMEOUT_DURATION_MS = 60_000;               // 1 minute in milliseconds
-// ─────────────────────────────────────────────────────────────────────────────
+const { Client, GatewayIntentBits, PermissionsBitField, EmbedBuilder } = require("discord.js");
+const config = require("./config.json");
 
 const client = new Client({
   intents: [
@@ -26,47 +8,96 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMembers,
   ],
-  partials: [Partials.Message, Partials.Channel],
 });
+
+// ─── Config ────────────────────────────────────────────────────────────────────
+
+const PROTECTED_USER_ID = config.protectedUserId;       // User ID to protect
+const TIMEOUT_SECONDS   = config.timeoutDuration;       // 60 or 30
+const TIMEOUT_MS        = TIMEOUT_SECONDS * 1000;
+const TIMEOUT_MESSAGE   = config.timeoutMessage;
+const LOG_CHANNEL_ID    = config.logChannelId || null;  // Optional log channel
+
+// ─── Ready ─────────────────────────────────────────────────────────────────────
 
 client.once("ready", () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
   console.log(`🛡️  Protecting user ID: ${PROTECTED_USER_ID}`);
+  console.log(`⏱️  Timeout duration: ${TIMEOUT_SECONDS}s`);
 });
+
+// ─── Message Handler ───────────────────────────────────────────────────────────
 
 client.on("messageCreate", async (message) => {
   // Ignore bots and system messages
   if (message.author.bot || !message.guild) return;
 
   // Check if the message mentions the protected user
-  const mentionedProtectedUser = message.mentions.users.has(PROTECTED_USER_ID);
-  if (!mentionedProtectedUser) return;
+  const mentionsProtected =
+    message.mentions.users.has(PROTECTED_USER_ID) ||
+    message.content.includes(`<@${PROTECTED_USER_ID}>`) ||
+    message.content.includes(`<@!${PROTECTED_USER_ID}>`);
 
-  // Don't punish the protected user for mentioning themselves
+  if (!mentionsProtected) return;
+
+  // Don't timeout the protected user themselves
   if (message.author.id === PROTECTED_USER_ID) return;
 
-  const offender = message.member;
+  const member = message.member;
+  if (!member) return;
 
-  // Make sure the member exists and isn't already timed out
-  if (!offender) return;
-
-  // Bots and server owners cannot be timed out — skip if the bot lacks permission
-  if (!offender.moderatable) {
-    console.warn(`⚠️  Cannot timeout ${offender.user.tag} — insufficient permissions or role hierarchy.`);
+  // Don't timeout admins / those with timeout immunity
+  if (
+    member.permissions.has(PermissionsBitField.Flags.Administrator) ||
+    member.permissions.has(PermissionsBitField.Flags.ModerateMembers)
+  ) {
+    console.log(`⚠️  Skipped timeout for privileged user: ${member.user.tag}`);
     return;
   }
 
-  try {
-    await offender.timeout(TIMEOUT_DURATION_MS, `Pinged the protected user (${PROTECTED_USER_ID})`);
+  // Check the bot has permission to timeout in this guild
+  const botMember = message.guild.members.cache.get(client.user.id);
+  if (!botMember?.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
+    console.error("❌ Bot is missing the Moderate Members permission.");
+    return;
+  }
 
-    await message.reply(
-      `🔇 <@${offender.id}> has been timed out for **1 minute** for pinging a protected user.`
+  // Apply the timeout
+  try {
+    await member.timeout(TIMEOUT_MS, `Pinged protected user (${PROTECTED_USER_ID})`);
+
+    // Reply in the channel
+    await message.reply({
+      content: TIMEOUT_MESSAGE,
+      allowedMentions: { repliedUser: false },
+    });
+
+    console.log(
+      `🔇 Timed out ${member.user.tag} for ${TIMEOUT_SECONDS}s in ${message.guild.name}`
     );
 
-    console.log(`⏱️  Timed out ${offender.user.tag} (${offender.id}) in #${message.channel.name}`);
+    // Optional: log to a dedicated channel
+    if (LOG_CHANNEL_ID) {
+      const logChannel = message.guild.channels.cache.get(LOG_CHANNEL_ID);
+      if (logChannel) {
+        const embed = new EmbedBuilder()
+          .setColor(0xff4444)
+          .setTitle("⏱️ Auto-Timeout")
+          .addFields(
+            { name: "User",     value: `${member.user.tag} (${member.user.id})`, inline: true },
+            { name: "Duration", value: `${TIMEOUT_SECONDS} seconds`,             inline: true },
+            { name: "Reason",   value: `Pinged <@${PROTECTED_USER_ID}>`,         inline: false },
+            { name: "Channel",  value: `${message.channel}`,                     inline: true },
+          )
+          .setTimestamp();
+        await logChannel.send({ embeds: [embed] });
+      }
+    }
   } catch (err) {
-    console.error(`❌ Failed to timeout ${offender.user.tag}:`, err.message);
+    console.error(`❌ Failed to timeout ${member.user.tag}:`, err.message);
   }
 });
 
-client.login(BOT_TOKEN);
+// ─── Login ─────────────────────────────────────────────────────────────────────
+
+client.login(config.token);
